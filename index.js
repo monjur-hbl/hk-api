@@ -13,7 +13,7 @@ const app = express();
 // Initialize Firestore
 const db = new Firestore({
     projectId: 'beds24-483408',
-    databaseId: '(default)'
+    databaseId: 'hk-miami'
 });
 
 // Collections
