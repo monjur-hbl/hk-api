@@ -1,6 +1,7 @@
 /**
  * Miami Beach Resort - HK API with Real-Time Webhooks
  * Combined: Housekeeping, Auth, Webhooks, Notifications
+ * TIMEZONE: Asia/Dhaka (GMT+6)
  */
 
 const express = require('express');
@@ -9,6 +10,11 @@ const { Firestore } = require('@google-cloud/firestore');
 const nodemailer = require('nodemailer');
 
 const app = express();
+
+// Bangladesh Timezone (GMT+6)
+const TIMEZONE = 'Asia/Dhaka';
+const getNowBD = () => new Date().toLocaleString('en-US', { timeZone: TIMEZONE });
+const getTodayBD = () => new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 
 // Initialize Firestore
 const db = new Firestore({
@@ -43,9 +49,12 @@ app.use(express.json({ limit: '10mb' }));
 // Health check
 // ============================================================
 app.get('/', (req, res) => {
-    res.json({ 
-        status: 'HK API with Auth running', 
-        timestamp: new Date().toISOString(),
+    res.json({
+        status: 'HK API with Auth running',
+        timezone: TIMEZONE,
+        todayBD: getTodayBD(),
+        timestampBD: getNowBD(),
+        timestampUTC: new Date().toISOString(),
         emailConfigured: true,
         webhookEndpoint: '/webhook/booking'
     });
@@ -195,8 +204,8 @@ app.post('/save', async (req, res) => {
         
         await db.collection(HK_COLLECTION).doc(type).set({
             data: data,
-            timestamp: timestamp || new Date().toISOString(),
-            updatedAt: new Date()
+            timestamp: timestamp || getNowBD(),
+            updatedAt: Firestore.FieldValue.serverTimestamp()
         });
         
         console.log(`Saved: ${type}`);
@@ -370,6 +379,62 @@ app.post('/auth/verify-otp', async (req, res) => {
 
         res.json({ success: true, user });
     } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ============================================================
+// ROOM CONFIGURATION (Dynamic Total Rooms)
+// ============================================================
+
+const CONFIG_COLLECTION = 'room_config';
+
+// Get total room count (dynamically configurable for maintenance)
+app.get('/room-config', async (req, res) => {
+    try {
+        const doc = await db.collection(CONFIG_COLLECTION).doc('total_rooms').get();
+        if (!doc.exists) {
+            // Default to 45 if not configured
+            return res.json({ success: true, totalRooms: 45, source: 'default' });
+        }
+        const data = doc.data();
+        res.json({
+            success: true,
+            totalRooms: data.count || 45,
+            lastUpdated: data.updatedAt?.toDate?.() || null,
+            updatedBy: data.updatedBy || null,
+            reason: data.reason || null,
+            source: 'firestore'
+        });
+    } catch (error) {
+        console.error('Get room config error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Update total room count (for admin - when rooms go under maintenance)
+app.post('/room-config', async (req, res) => {
+    try {
+        const { totalRooms, reason, updatedBy } = req.body;
+
+        if (!totalRooms || typeof totalRooms !== 'number' || totalRooms < 1 || totalRooms > 100) {
+            return res.status(400).json({
+                success: false,
+                error: 'totalRooms must be a number between 1 and 100'
+            });
+        }
+
+        await db.collection(CONFIG_COLLECTION).doc('total_rooms').set({
+            count: totalRooms,
+            reason: reason || 'Manual update',
+            updatedBy: updatedBy || 'system',
+            updatedAt: Firestore.FieldValue.serverTimestamp()
+        });
+
+        console.log(`Room count updated to ${totalRooms} by ${updatedBy || 'system'}: ${reason || 'Manual update'}`);
+        res.json({ success: true, totalRooms });
+    } catch (error) {
+        console.error('Update room config error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
